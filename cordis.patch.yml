@@ -1,0 +1,76 @@
+# dsh-purge bundle patch
+#
+# 清洗 + 演练台都在本插件内（lib/redteam、presets/redteam、skills/redteam）。
+# 只装 dsh-purge，不外接、不 link 其它红队包。
+
+# 关掉旧的独立红队包行（若用户以前装过 dsh-redteam-mode）
+- id: redteam-store
+  name: dsh-redteam-store
+  disabled: true
+
+- id: redteam-ui
+  name: dsh-redteam-ui
+  disabled: true
+
+- id: redteam-mode
+  name: dsh-redteam-mode
+  disabled: true
+
+- id: redteam-mode-store
+  name: dsh-redteam-mode/store
+  disabled: true
+
+- id: redteam-mode-ui
+  name: dsh-redteam-mode/ui
+  disabled: true
+
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    personaPrefix: ""
+    # 不要在这里写裸 `{{cwd}}`。0.2.1 的 agent-loop 只注册 provider / model，
+    # 未注册变量会让宿主在渲染时抛
+    #   unknown prompt variable "{{cwd}}" in section "deployment:persona-suffix"
+    # 而且这条 section 每轮都参与渲染，所以装完插件还没点「应用」就会炸。
+    # 工作目录由 lib/cwd-variable.js 注册 `cwd` 变量后由宿主自己渲染，
+    # 这里只把 persona 收干净，不再发变量。
+    personaSuffix: ""
+
+- id: dsh-purge
+  inject: [systemPrompt, tools]
+
+- insert:
+    - id: dsh-purge
+      name: 'dsh-purge'
+      inject: [systemPrompt, tools]
+      config:
+        enabled: true
+        autoApplyOnStart: false
+        autoUpdateOnStart: false
+        autoRevertOnMissing: false
+        injectOnce: false
+        stripMnemon: true
+        verbose: false
+        postPrompt: ""
+        postPromptOrder: 5100
+        autoRetry: true
+        retryMax: 3
+        autoContinue: false
+        continueMax: 3
+        continueText: "继续"
+        capabilityProtocol: true
+        hooksDenyBypass: true
+
+    # 演练台：预设 + 技能落地（本插件 lib/redteam）
+    - id: dsh-purge-redteam
+      name: dsh-purge/redteam
+
+    # 演练台事实库（SQLite），数据在 $DSH_HOME/redteam
+    - id: dsh-purge-redteam-store
+      name: dsh-purge/redteam/store
+      config:
+        root: !!js dshHomePath('redteam')
+
+    # 演练台 HTTP 桥 POST /redteam/api
+    - id: dsh-purge-redteam-ui
+      name: dsh-purge/redteam/ui
