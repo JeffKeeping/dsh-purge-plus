@@ -7,6 +7,49 @@ Baseline: **1.2.0**. Everything below is what this fork adds, improves, or fixes
 
 ---
 
+## 未发布 — 修两处静默失效：hostFs 缺 fd 方法、atomicCopyFile 漏 await
+
+两处都是 Windows + 0.2.1-rc.2 实测出来的，共同特点：**不报错，只是悄悄不工作**。
+
+### 1. `hostFs` 没有以 fd 为参数的同步方法 → 一份 bak 都建不出来
+
+`lib/core.js` 把 `const fs = hostFs`，所以 `fs.closeSync(fd)` 实际是 `hostFs.closeSync(fd)`。
+而 `HOST_SYNC` 白名单只收了路径型方法，fd 型的一个都没导出 —— 调用点抛
+`TypeError: hostFs.closeSync is not a function`。多数调用点写在 `finally` 或空 `catch` 里，异常被吞掉：
+
+- `makeHostBackups`：`openSync(bak, "wx")` 建占位 → `closeSync` 抛错被吞 → **fd 泄漏、占位文件仍被独占打开**
+  → Windows 上 `atomicCopyFile` 的 `rename` 报 `EPERM` → **`.dshpurge.bak` 一个都建不出来**。
+  更麻烦的是占位文件已经落盘，下次 `openSync(bak, "wx")` 命中 `EEXIST` 直接 `continue`，**这个文件从此不再备份**。
+  还原/卸载因此失去退路（对应上游 #127 / #106）。
+- `isTextShim()`：`readSync` 抛错 → 恒 `return false` → `shimFileStatus()` 把真正的文本 shim 报成 `binary`，
+  官方 CLI 的补丁与状态检查全部失效。
+
+**修法**：`lib/extract-asar.js` 新增 `HOST_FD` 白名单，把 fd 型同步方法直接接到 `diskFs()`。
+不走 `route()` 是因为那条路径拿第一个参数当路径探 asar（`fsFor(3)` 会拿数字去 probe），fd 不是路径。
+
+### 2. `desktop.repairOfficialCliAfterUnpack` 同步调用 async 的 `atomicCopyFile`
+
+`atomicCopyFile` 是 `async`，调用点没 `await` 又包在同步 `try` 里 —— 拒绝逃出 `catch`，
+在 Node ≥15 直接终止进程（对应上游 #119）。
+
+**修法**：该函数改 `async` 并补 `await`；`core.repairOfficialCliAfterUnpack` 同步改 `async`，
+`core.js` 与 `index.js` 两个调用点补 `await`（两处宿主函数本身已是 `async`）。
+
+### 验证
+
+新增 `test/hostfs-sync.mjs`（20 项，`npm run test:hostfs`）：
+
+- 静态核对 `core.js` / `index.js` / `hooks-deny.js` / `host-lease.js` 里每一个 `fs.<method>(` 都能在 `hostFs` 上解析
+- fd 生命周期：`openSync` → `writeSync` → `fsyncSync` → `closeSync`，并用「二次 close 被拒」证明句柄真的释放了
+- 复刻 `makeHostBackups` 的「wx 占位 → close → atomicCopyFile 覆盖」序列，断言 bak 内容正确
+- `shimFileStatus` 对真文本 shim 返回 `original` 而非 `binary`
+- 断言两处 `repairOfficialCliAfterUnpack` 都是 `AsyncFunction`
+
+**负向验证**：在未修复的工作区跑同一套测试，7 项断言直接 FAIL（缺失方法逐个点名），修复后 20/20 PASS。
+`test:gate` 71 项、`test:cwd` 21 项改动前后一致，无回归。
+
+---
+
 ## 1.4.3 — 恢复「插话」，并把 next-step 竞态真正修掉
 
 1.4.2 的 **#85** 把 `prompt()` 一律改成 `followup`，副作用是**输入框的「插话发送」和队列条的「插话」都变成了排队**：点下去执行的是 `inbox.remove(id)` + `followup(message)`，消息被从 `next-turn` 摘掉、又插回同一个 `next-turn`，净状态不变——界面上就是「点了没反应」。

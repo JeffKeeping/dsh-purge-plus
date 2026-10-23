@@ -41,7 +41,8 @@
     "embed-prompt": "node scripts/embed-default-prompt.mjs",
     "build:client": "node scripts/build-client.mjs",
     "test:gate": "node test/gate.mjs",
-    "test:cwd": "node test/cwd-variable.mjs"
+    "test:cwd": "node test/cwd-variable.mjs",
+    "test:hostfs": "node test/hostfs-sync.mjs"
   },
   "license": "MIT",
   "keywords": [
